@@ -12,6 +12,10 @@ main() {
   stack_exists "$BACKEND_STACK" || { echo "Stack $BACKEND_STACK not found; run make deploy-backend first." >&2; exit 1; }
   require_auth_stack
   api_base_url="$(output "$BACKEND_STACK" ApiBaseUrl)"
+  if [[ "$api_base_url" != https://* ]]; then
+    echo "Backend API URL is missing or invalid ('$api_base_url'); check the ApiBaseUrl output and run make deploy-backend first." >&2
+    exit 1
+  fi
 
   echo "==> [1/6] Build the frontend (API: $api_base_url)"
   (cd frontend && npm ci && \
