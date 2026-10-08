@@ -38,6 +38,12 @@ Resources:
       # Users sign in with their email; Cognito emails a code to verify it.
       UsernameAttributes: [email]
       AutoVerifiedAttributes: [email]
+      # Managed login (the hosted sign-in page) needs the Essentials tier; the first 10,000
+      # monthly active users are free.
+      UserPoolTier: ESSENTIALS
+      # Self sign-up stays on: anyone can create an account from the sign-in page.
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
       # A new email (profile page) takes effect only after its code is entered; until then
       # the user keeps signing in with, and recovering the password through, the old one.
       UserAttributeUpdateSettings:
@@ -75,12 +81,22 @@ Resources:
       UserPoolTags:
         PROJECT_NAME: !Ref ProjectName
 
-  # Hosted domain for the OAuth endpoints (needed for Google). Prefixes are global.
+  # Hosted domain for the OAuth endpoints and the managed sign-in page. Prefixes are global.
   UserPoolDomain:
     Type: AWS::Cognito::UserPoolDomain
     Properties:
       UserPoolId: !Ref UserPool
       Domain: !Sub ${ProjectName}-${AWS::AccountId}
+      ManagedLoginVersion: 2
+
+  # Without branding a version 2 domain has no sign-in page to show.
+  ManagedLoginBranding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    DependsOn: UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientId: !Ref UserPoolClient
+      UseCognitoProvidedValues: true
 
   GoogleIdentityProvider:
     Type: AWS::Cognito::UserPoolIdentityProvider
@@ -122,14 +138,23 @@ Resources:
         - [COGNITO]
       AllowedOAuthFlowsUserPoolClient: true
       AllowedOAuthFlows: [code]
-      AllowedOAuthScopes: [openid, email, profile]
-      # "<origin>/login" for every origin: join with "/login," and append the last "/login".
+      # aws.cognito.signin.user.admin lets the profile page change the name, email and password.
+      AllowedOAuthScopes: [openid, email, profile, aws.cognito.signin.user.admin]
+      # "<origin>/login" and "<origin>/login/" for every origin (Cognito compares URLs exactly,
+      # trailing slash included): join with "/login,", append the last "/login", then the same
+      # with "/login/".
       CallbackURLs: !Split
         - ","
-        - !Join ["", [!Join ["/login,", !Ref AppUrls], "/login"]]
+        - !Join
+          - ","
+          - - !Join ["", [!Join ["/login,", !Ref AppUrls], "/login"]]
+            - !Join ["", [!Join ["/login/,", !Ref AppUrls], "/login/"]]
       LogoutURLs: !Split
         - ","
-        - !Join ["", [!Join ["/login,", !Ref AppUrls], "/login"]]
+        - !Join
+          - ","
+          - - !Join ["", [!Join ["/login,", !Ref AppUrls], "/login"]]
+            - !Join ["", [!Join ["/login/,", !Ref AppUrls], "/login/"]]
 
 Outputs:
   Region:

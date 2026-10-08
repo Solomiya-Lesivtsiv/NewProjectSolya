@@ -1,15 +1,10 @@
 import { useMutation } from '@tanstack/react-query'
 import { Amplify } from 'aws-amplify'
 import {
-  autoSignIn,
-  confirmSignUp,
   confirmUserAttribute,
   fetchAuthSession,
-  resendSignUpCode,
   sendUserAttributeVerificationCode,
-  signIn,
   signInWithRedirect,
-  signUp,
   updatePassword,
   updateUserAttribute,
 } from 'aws-amplify/auth'
@@ -21,9 +16,6 @@ export type User = {
   provider: 'password' | 'google'
 }
 
-export type LoginData = { email: string; password: string }
-export type SignupData = { name: string; email: string; password: string }
-export type ConfirmData = { email: string; code: string }
 export type PasswordChangeData = { currentPassword: string; newPassword: string }
 
 // Public Cognito ids, baked in at build time (make deploy-auth writes them to .env).
@@ -32,14 +24,14 @@ export const authConfig = {
   userPoolId: env.COGNITO_USER_POOL_ID ?? '',
   clientId: env.COGNITO_CLIENT_ID ?? '',
   domain: env.COGNITO_DOMAIN ?? '',
-  googleEnabled: env.COGNITO_GOOGLE_ENABLED === 'true',
 }
 export const authConfigured = Boolean(authConfig.userPoolId && authConfig.clientId)
 
 export function configureAuth() {
   if (!authConfigured) return
-  // Cognito only redirects (after Google) to URLs listed in infra/auth.yaml: <origin>/login.
-  const redirect = [`${window.location.origin}/login`]
+  // Cognito only redirects back to URLs listed in infra/auth.yaml, and compares them exactly:
+  // <origin>/login and <origin>/login/. Amplify picks the one that matches the current page.
+  const redirect = [`${window.location.origin}/login`, `${window.location.origin}/login/`]
   Amplify.configure({
     Auth: {
       Cognito: {
@@ -50,7 +42,7 @@ export function configureAuth() {
           ...(authConfig.domain && {
             oauth: {
               domain: authConfig.domain,
-              scopes: ['openid', 'email', 'profile'],
+              scopes: ['openid', 'email', 'profile', 'aws.cognito.signin.user.admin'],
               redirectSignIn: redirect,
               redirectSignOut: redirect,
               responseType: 'code',
@@ -62,21 +54,8 @@ export function configureAuth() {
   })
 }
 
-/** Sign-in succeeded but the email was never verified: the signup page asks for the code. */
-export class NeedsConfirmationError extends Error {
-  readonly email: string
-
-  constructor(email: string) {
-    super('Confirm your email first')
-    this.email = email
-  }
-}
-
 // Cognito's exception names -> messages for people.
 const MESSAGES: Record<string, string> = {
-  NotAuthorizedException: 'Wrong email or password',
-  UserNotFoundException: 'Wrong email or password',
-  UsernameExistsException: 'An account with this email already exists',
   AliasExistsException: 'An account with this email already exists',
   CodeMismatchException: 'That code is not right; check the email and try again',
   ExpiredCodeException: 'That code has expired; send a new one',
@@ -86,7 +65,6 @@ const MESSAGES: Record<string, string> = {
 }
 
 function friendly(error: unknown): Error {
-  if (error instanceof NeedsConfirmationError) return error
   if (error instanceof Error) return new Error(MESSAGES[error.name] ?? error.message)
   return new Error('Something went wrong')
 }
@@ -134,35 +112,8 @@ async function reloadUser(): Promise<User | null> {
 }
 
 export const authApi = {
-  login: ({ email, password }: LoginData) =>
-    withFriendlyErrors(async () => {
-      const { nextStep } = await signIn({ username: email, password })
-      if (nextStep.signInStep === 'CONFIRM_SIGN_UP') throw new NeedsConfirmationError(email)
-      if (nextStep.signInStep !== 'DONE') throw new Error(`Unsupported sign-in step`)
-      return loadUser()
-    }),
-  /** Creates the account; Cognito emails a code that `confirm` checks. */
-  signup: ({ name, email, password }: SignupData) =>
-    withFriendlyErrors(async () => {
-      const { nextStep } = await signUp({
-        username: email,
-        password,
-        options: { userAttributes: { email, name }, autoSignIn: true },
-      })
-      return { needsConfirmation: nextStep.signUpStep === 'CONFIRM_SIGN_UP' }
-    }),
-  /** Verifies the email. Signs in straight away if the password is still known (same visit). */
-  confirm: ({ email, code }: ConfirmData) =>
-    withFriendlyErrors(async () => {
-      const { nextStep } = await confirmSignUp({ username: email, confirmationCode: code })
-      if (nextStep.signUpStep !== 'COMPLETE_AUTO_SIGN_IN') return null
-      await autoSignIn()
-      return loadUser()
-    }),
-  resendCode: (email: string) =>
-    withFriendlyErrors(() => resendSignUpCode({ username: email }).then(() => undefined)),
-  /** Leaves the page for Google; the user comes back signed in on /login. */
-  loginWithGoogle: () => withFriendlyErrors(() => signInWithRedirect({ provider: 'Google' })),
+  /** Leaves the page for Cognito's managed login (email and password, or Google). */
+  startSignIn: () => signInWithRedirect(),
 
   // Profile changes (password accounts only: Google sets the name and email on every sign-in).
   updateName: (name: string) =>
@@ -213,34 +164,6 @@ export function useAuth(): AuthContextValue {
   const value = useContext(AuthContext)
   if (!value) throw new Error('useAuth must be used inside <AuthProvider>')
   return value
-}
-
-export function useLogin() {
-  const { signIn } = useAuth()
-  return useMutation({
-    mutationFn: authApi.login,
-    onSuccess: (user) => user && signIn(user),
-  })
-}
-
-export function useSignup() {
-  return useMutation({ mutationFn: authApi.signup })
-}
-
-export function useConfirmSignup() {
-  const { signIn } = useAuth()
-  return useMutation({
-    mutationFn: authApi.confirm,
-    onSuccess: (user) => user && signIn(user),
-  })
-}
-
-export function useResendCode() {
-  return useMutation({ mutationFn: authApi.resendCode })
-}
-
-export function useGoogleLogin() {
-  return useMutation({ mutationFn: authApi.loginWithGoogle })
 }
 
 /** Puts the updated user (from the refreshed token) into the auth state. */

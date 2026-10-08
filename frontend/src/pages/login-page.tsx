@@ -1,139 +1,68 @@
-import { zodResolver } from '@hookform/resolvers/zod'
-import { Controller, useForm } from 'react-hook-form'
-import { Link, useLocation, useNavigate } from 'react-router'
-import { z } from 'zod'
+import { Hub } from 'aws-amplify/utils'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router'
 
-import {
-  AuthLayout,
-  AuthNotConfigured,
-  GoogleButton,
-  OrDivider,
-  PasswordInput,
-} from '@/components/auth-layout'
+import { AuthLayout, AuthNotConfigured } from '@/components/auth-layout'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
-import { authConfigured, NeedsConfirmationError, useGoogleLogin, useLogin } from '@/lib/auth'
+import { authApi, authConfig, authConfigured } from '@/lib/auth'
 
-const loginSchema = z.object({
-  email: z.email('Enter a valid email'),
-  password: z.string().min(1, 'Enter your password'),
-})
-
-type LoginValues = z.infer<typeof loginSchema>
-
-type LocationState = {
-  /** Where the user was headed before being sent to the login page. */
-  from?: string
-  /** A message from the previous page, e.g. after confirming the email. */
-  notice?: string
-  email?: string
-} | null
-
+/**
+ * Both ends of the Cognito sign-in. Opened by a visitor it redirects to Cognito's managed login
+ * (email and password, sign-up, Continue with Google). When Cognito sends the browser back here
+ * with `?code=...`, Amplify exchanges the code for tokens and the router (GuestOnly in App)
+ * moves the now signed-in user on; this page only shows progress, or the error.
+ */
 export function LoginPage() {
-  const navigate = useNavigate()
-  const state = useLocation().state as LocationState
-  const from = state?.from ?? '/home'
-  const login = useLogin()
-  const googleLogin = useGoogleLogin()
-  const pending = login.isPending || googleLogin.isPending
-  const form = useForm<LoginValues>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: { email: state?.email ?? '', password: '' },
+  const [params] = useSearchParams()
+  // Read once: Amplify removes the code from the URL while it completes the sign-in.
+  const [returning] = useState(() => params.has('code') || params.has('error'))
+  const [error, setError] = useState<string | null>(() => {
+    const failure = params.get('error_description') ?? params.get('error')
+    return failure ?? (authConfigured && authConfig.domain ? null : 'Sign-in is not configured')
   })
+  const started = useRef(false)
 
-  const onError = (error: Error) => {
-    // An unverified account: finish the signup by entering the emailed code.
-    if (error instanceof NeedsConfirmationError) {
-      navigate('/signup', { state: { confirmEmail: error.email } })
-      return
-    }
-    form.setError('root', { message: error.message })
+  const start = () => {
+    setError(null)
+    authApi.startSignIn().catch((e: unknown) => {
+      setError(e instanceof Error ? e.message : 'Could not start sign-in')
+    })
   }
 
-  const onSubmit = form.handleSubmit((values) =>
-    login.mutate(values, { onSuccess: () => navigate(from, { replace: true }), onError }),
-  )
+  useEffect(() => {
+    const stop = Hub.listen('auth', ({ payload }) => {
+      if (payload.event === 'signInWithRedirect_failure') {
+        setError(payload.data?.error?.message ?? 'Sign-in failed')
+      }
+    })
+    return stop
+  }, [])
+
+  useEffect(() => {
+    // Once only (StrictMode runs effects twice): a second call would replace the saved state
+    // that the first redirect is about to need.
+    if (started.current || returning || error) return
+    started.current = true
+    start()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <AuthLayout
-      title="Welcome back"
-      subtitle="Sign in to see your meetings."
-      footer={
-        <>
-          New here?{' '}
-          <Link
-            to="/signup"
-            className="font-semibold text-hover underline-offset-4 hover:underline"
-          >
-            Create an account
-          </Link>
-        </>
-      }
+      title="Sign in"
+      subtitle={returning ? 'Finishing sign-in...' : 'Taking you to the sign-in page...'}
+      footer=""
     >
       {!authConfigured && <AuthNotConfigured />}
-      {state?.notice && (
-        <Alert>
-          <AlertDescription>{state.notice}</AlertDescription>
-        </Alert>
+      {error && (
+        <>
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+          {authConfigured && <Button onClick={start}>Try again</Button>}
+        </>
       )}
-      <GoogleButton
-        disabled={pending || !authConfigured}
-        pending={googleLogin.isPending}
-        onClick={() => googleLogin.mutate(undefined, { onError })}
-      >
-        Continue with Google
-      </GoogleButton>
-      <OrDivider />
-      <form onSubmit={onSubmit} noValidate>
-        <FieldGroup className="gap-4 short:gap-3">
-          <Controller
-            name="email"
-            control={form.control}
-            render={({ field, fieldState }) => (
-              <Field data-invalid={fieldState.invalid}>
-                <FieldLabel htmlFor="login-email">Email</FieldLabel>
-                <Input
-                  id="login-email"
-                  type="email"
-                  autoComplete="email"
-                  autoFocus
-                  aria-invalid={fieldState.invalid}
-                  {...field}
-                />
-                <FieldError errors={[fieldState.error]} />
-              </Field>
-            )}
-          />
-          <Controller
-            name="password"
-            control={form.control}
-            render={({ field, fieldState }) => (
-              <Field data-invalid={fieldState.invalid}>
-                <FieldLabel htmlFor="login-password">Password</FieldLabel>
-                <PasswordInput
-                  id="login-password"
-                  autoComplete="current-password"
-                  aria-invalid={fieldState.invalid}
-                  {...field}
-                />
-                <FieldError errors={[fieldState.error]} />
-              </Field>
-            )}
-          />
-          {form.formState.errors.root && (
-            <FieldError>{form.formState.errors.root.message}</FieldError>
-          )}
-          <Button
-            type="submit"
-            className="mt-1 w-full"
-            disabled={pending || !authConfigured}
-          >
-            {login.isPending ? 'Signing in...' : 'Sign in'}
-          </Button>
-        </FieldGroup>
-      </form>
     </AuthLayout>
   )
 }
