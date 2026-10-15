@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     # The pool's jwks.json. Set on AWS, where the function has no internet access; locally the
     # keys are downloaded on first use.
     cognito_jwks: str = ""
+    # S3 bucket the weekly report builder writes to (set on the report-builder function).
+    reports_bucket: str = ""
     cors_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:5173",
         "http://localhost:3000",

@@ -103,6 +103,30 @@ Resources:
         - Key: PROJECT_NAME
           Value: !Ref ProjectName
 
+  # The private subnets' own route table (they would otherwise share the VPC's main one), so that
+  # gateway endpoints, such as S3 for the weekly reports (reports.yaml), can be attached to it.
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-private
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
   # --------------------------------------------------------- Security groups
   FunctionSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -293,3 +317,12 @@ Outputs:
     Value: !GetAtt Database.Endpoint.Address
   LogGroup:
     Value: !Ref LogGroup
+  # The network the weekly report builder (reports.yaml) joins to reach the database.
+  VpcId:
+    Value: !Ref Vpc
+  PrivateSubnetIds:
+    Value: !Join [",", [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]
+  PrivateRouteTableId:
+    Value: !Ref PrivateRouteTable
+  FunctionSecurityGroupId:
+    Value: !Ref FunctionSecurityGroup
