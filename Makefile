@@ -8,7 +8,7 @@ s ?=
 .DEFAULT_GOAL := help
 .PHONY: help env build up down restart logs ps migrate migration seed psql test lint format \
 	dev-backend dev-frontend install clean deploy deploy-auth deploy-backend deploy-frontend destroy-auth destroy-backend destroy-frontend add-domain remove-domain infra-lint \
-	deploy-reports report-now destroy-reports
+	deploy-reports report-now destroy-reports deploy-ai destroy-ai llm-hello parse
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(firstword $(MAKEFILE_LIST)) | \
@@ -81,7 +81,8 @@ AWS_ENV := AWS_ACCESS_KEY_ID="$(AWS_ACCESS_KEY_ID)" AWS_SECRET_ACCESS_KEY="$(AWS
 	PROJECT_NAME="$(or $(PROJECT_NAME),$(APP_NAME))" CORS_ORIGINS_AWS="$(CORS_ORIGINS_AWS)" \
 	LAMBDA_MEMORY="$(LAMBDA_MEMORY)" DOMAIN_NAME="$(DOMAIN_NAME)" HOSTED_ZONE_ID="$(HOSTED_ZONE_ID)" \
 	GOOGLE_CLIENT_ID="$(GOOGLE_CLIENT_ID)" GOOGLE_CLIENT_SECRET="$(GOOGLE_CLIENT_SECRET)" \
-	REPORT_EMAIL="$(REPORT_EMAIL)" REPORT_SCHEDULE="$(REPORT_SCHEDULE)"
+	REPORT_EMAIL="$(REPORT_EMAIL)" REPORT_SCHEDULE="$(REPORT_SCHEDULE)" \
+	PARSER_MODEL="$(PARSER_MODEL)"
 
 deploy: deploy-backend deploy-frontend ## Deploy the whole app to AWS (after make deploy-auth)
 
@@ -119,4 +120,19 @@ destroy-frontend: env ## Delete the S3 bucket, CloudFront distribution and domai
 	@$(AWS_ENV) ./infra/destroy-frontend.sh
 
 infra-lint: ## Lint the CloudFormation templates
-	uvx cfn-lint infra/*.yaml
+	uvx cfn-lint infra/*.yaml infra/*.yml
+
+# --- Agenda parser (Lab 6) ---
+
+llm-hello: ## First call to Claude on Bedrock from your laptop (uses your AWS credentials)
+	cd backend && $(AWS_ENV) uv run python -m app.ai.cli hello
+
+parse: ## Run the agenda parser locally: make parse TEXT="Пн 10:00, синк по прайсингу, 45 хв ..."
+	@test -n "$(TEXT)" || (echo 'Usage: make parse TEXT="..."' && exit 1)
+	cd backend && $(AWS_ENV) uv run python -m app.ai.cli parse "$(TEXT)"
+
+deploy-ai: env ## Deploy the agenda parser (Lambda + function URL, outside the VPC; after deploy-backend)
+	@$(AWS_ENV) bash ./infra/deploy-ai.sh
+
+destroy-ai: env ## Delete the agenda parser stack
+	@$(AWS_ENV) bash -c 'source infra/common.sh && aws cloudformation delete-stack --stack-name "$$AI_STACK" && aws cloudformation wait stack-delete-complete --stack-name "$$AI_STACK"'

@@ -12,6 +12,7 @@ from sqlalchemy import (
     Uuid,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -72,6 +73,11 @@ class Meeting(Base):
     owner_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    # The agenda the user saved (title, items, action items); NULL until there is one.
+    agenda: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    # What the LLM suggested for it, with the model and prompt version. The difference between
+    # this and `agenda` is the quality signal: every correction the user made is feedback.
+    ai_suggestion: Mapped[dict | None] = mapped_column(JSONB, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     participants: Mapped[list[Participant]] = relationship(

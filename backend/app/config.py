@@ -19,6 +19,19 @@ class Settings(BaseSettings):
     cognito_jwks: str = ""
     # S3 bucket the weekly report builder writes to (set on the report-builder function).
     reports_bucket: str = ""
+    # Claude on Amazon Bedrock, used by the agenda parser (app.ai). The model id is configuration,
+    # not code, so it can be changed (and compared) without a new release.
+    parser_model: str = "anthropic.claude-opus-5-5"
+    parser_effort: str = "low"
+    bedrock_region: str = "us-east-1"
+    # Only for trying the parser from a laptop while Bedrock is not available: "openai" sends the
+    # same prompt and schema to OpenAI. The deployed function always uses Bedrock.
+    parser_provider: str = "bedrock"
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    # Any OpenAI-compatible endpoint works, e.g. Gemini's
+    # https://generativelanguage.googleapis.com/v1beta/openai
+    openai_base_url: str = "https://api.openai.com/v1"
     cors_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:5173",
         "http://localhost:3000",

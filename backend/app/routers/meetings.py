@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.auth import CurrentUser
 from app.db import SessionDep
 from app.models import Meeting, Participant, User
-from app.schemas import MeetingCreate, MeetingRead
+from app.schemas import AgendaSave, MeetingCreate, MeetingRead
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
@@ -98,3 +98,19 @@ async def delete_meeting(meeting_id: uuid.UUID, session: SessionDep, user: Curre
     await session.delete(meeting)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put("/{meeting_id}/agenda", response_model=MeetingRead)
+async def save_agenda(
+    meeting_id: uuid.UUID, payload: AgendaSave, session: SessionDep, user: CurrentUser
+) -> Meeting:
+    """Saves the agenda the user checked. This is the only way an agenda is written: the parser
+    function only suggests, so the same validation applies however the agenda was made."""
+    meeting = await _get_meeting(session, meeting_id, user)
+    meeting.agenda = payload.model_dump(mode="json", exclude={"ai_suggestion"})
+    meeting.ai_suggestion = (
+        payload.ai_suggestion.model_dump(mode="json") if payload.ai_suggestion else None
+    )
+    await session.commit()
+    session.expunge(meeting)
+    return await _get_meeting(session, meeting_id, user)

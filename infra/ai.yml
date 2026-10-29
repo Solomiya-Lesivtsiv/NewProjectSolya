@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Meetings app - the agenda parser (Paste an agenda). One Lambda function with a public function
+  URL: it takes pasted text from the browser, asks Claude on Amazon Bedrock to turn it into a
+  structured agenda, validates the answer and returns JSON. It needs no database, so it runs
+  outside the VPC (internet access to Bedrock and Cognito's keys, no NAT gateway, no VPC endpoint,
+  and no cost while nobody uses it). It never writes anything: saving goes through the normal API.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: meetings
+    AllowedPattern: "[a-z][a-z0-9-]*"
+  ImageUri:
+    Type: String
+    Description: The backend image (the one the API runs); the parser only starts another app in it.
+  CognitoUserPoolId:
+    Type: String
+    Description: User pool whose ID tokens the parser accepts (output of the auth stack).
+  CognitoClientId:
+    Type: String
+    Description: App client of that pool (output of the auth stack).
+  CorsOrigins:
+    Type: String
+    Description: Sites allowed to call the parser, comma-separated (the same list as the API's).
+  ParserModel:
+    Type: String
+    Default: anthropic.claude-opus-5-5
+    Description: Bedrock model id. Configuration, not code, so models can be compared without a release.
+  ParserEffort:
+    Type: String
+    Default: low
+    AllowedValues: [low, medium, high]
+
+Resources:
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /${ProjectName}/agenda-parser
+      RetentionInDays: 30
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: bedrock
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # "*" for now; narrowing it to one model is a discussion question of the lab.
+              - Effect: Allow
+                Action: bedrock-mantle:CreateInference
+                Resource: "*"
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  # The API's image, started with another command: the agenda-parser app. No VpcConfig.
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-agenda-parser
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ImageUri
+      ImageConfig:
+        Command: [uvicorn, "app.ai.agenda_lambda:app", --host, 0.0.0.0, --port, "8000"]
+      Architectures: [arm64]
+      MemorySize: 512
+      # A parse takes 2-8 s; the rest is room for a cold start and one retry of the model call.
+      Timeout: 30
+      Role: !GetAtt Role.Arn
+      LoggingConfig:
+        LogGroup: !Ref LogGroup
+      Environment:
+        Variables:
+          PARSER_MODEL: !Ref ParserModel
+          PARSER_EFFORT: !Ref ParserEffort
+          BEDROCK_REGION: !Ref AWS::Region
+          CORS_ORIGINS: !Ref CorsOrigins
+          COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
+          COGNITO_CLIENT_ID: !Ref CognitoClientId
+          # Lambda Web Adapter: forward requests to uvicorn once /api/health answers.
+          AWS_LWA_PORT: "8000"
+          AWS_LWA_READINESS_CHECK_PATH: /api/health
+          AWS_LWA_ASYNC_INIT: "true"
+      Tags:
+        - Key: PROJECT_NAME
+          Value: !Ref ProjectName
+
+  # Public, like the API's: the browser calls it directly. Who may call is decided by the Cognito
+  # token (401 otherwise); which sites may, by the app's CORS middleware (POST only).
+  FunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt Function.Arn
+      AuthType: NONE
+
+  # A public function URL needs both permissions. (Function URLs and permissions have no tags.)
+  FunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  FunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Function
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+Outputs:
+  ParserUrl:
+    Description: Function URL without the trailing slash; the browser POSTs to <it>/api/parse-agenda
+    Value: !Sub
+      - https://${Domain}
+      - Domain: !Select [2, !Split ["/", !GetAtt FunctionUrl.FunctionUrl]]
+  FunctionName:
+    Value: !Ref Function
+  LogGroup:
+    Value: !Ref LogGroup

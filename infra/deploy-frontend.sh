@@ -17,9 +17,16 @@ main() {
     exit 1
   fi
 
-  echo "==> [1/6] Build the frontend (API: $api_base_url)"
+  # The agenda parser (make deploy-ai) is optional: without it the screen offers no pasting.
+  parser_url=""
+  if stack_exists "$AI_STACK"; then
+    parser_url="$(output "$AI_STACK" ParserUrl)"
+  fi
+
+  echo "==> [1/6] Build the frontend (API: $api_base_url, agenda parser: ${parser_url:-none})"
   (cd frontend && npm ci && \
     VITE_API_URL="$api_base_url" \
+    VITE_AGENDA_PARSER_URL="$parser_url" \
     COGNITO_USER_POOL_ID="$(output "$AUTH_STACK" UserPoolId)" \
     COGNITO_CLIENT_ID="$(output "$AUTH_STACK" UserPoolClientId)" \
     COGNITO_DOMAIN="$(output "$AUTH_STACK" Domain)" \

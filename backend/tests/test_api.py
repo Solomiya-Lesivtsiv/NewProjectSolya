@@ -173,3 +173,73 @@ async def test_duplicate_participant_email(client: AsyncClient) -> None:
 async def test_invalid_participant_email(client: AsyncClient) -> None:
     response = await client.post("/api/participants", json={"name": "X", "email": "not-an-email"})
     assert response.status_code == 422
+
+
+AGENDA = {
+    "title": "Pricing sync",
+    "items": [{"topic": "Нові тарифи Pro", "owner": "Олена", "minutes": 15}, {"topic": "Знижка"}],
+    "action_items": [{"task": "Порівняння з конкурентами", "owner": "Taras", "due": "2026-10-23"}],
+}
+
+
+async def test_meeting_has_no_agenda_at_first(client: AsyncClient) -> None:
+    created = (await client.post("/api/meetings", json=meeting_payload())).json()
+    assert created["agenda"] is None
+
+
+async def test_save_agenda_with_the_ai_suggestion(client: AsyncClient) -> None:
+    meeting = (await client.post("/api/meetings", json=meeting_payload())).json()
+    suggestion = {
+        "agenda": {**AGENDA, "language": "uk"},
+        "model": "anthropic.claude-opus-5-5",
+        "prompt_version": "agenda-v1",
+    }
+
+    response = await client.put(
+        f"/api/meetings/{meeting['id']}/agenda", json={**AGENDA, "ai_suggestion": suggestion}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["agenda"] == {
+        "title": "Pricing sync",
+        "items": [
+            {"topic": "Нові тарифи Pro", "owner": "Олена", "minutes": 15},
+            {"topic": "Знижка", "owner": None, "minutes": None},
+        ],
+        "action_items": [
+            {"task": "Порівняння з конкурентами", "owner": "Taras", "due": "2026-10-23"}
+        ],
+    }
+    # The suggestion is stored, but it is not part of the response: it is for measuring quality.
+    assert "ai_suggestion" not in response.json()
+    assert (await client.get(f"/api/meetings/{meeting['id']}")).json()["agenda"]["title"] == (
+        "Pricing sync"
+    )
+
+
+async def test_save_agenda_by_hand_without_a_suggestion(client: AsyncClient) -> None:
+    meeting = (await client.post("/api/meetings", json=meeting_payload())).json()
+    response = await client.put(
+        f"/api/meetings/{meeting['id']}/agenda", json={"items": [{"topic": "Intro"}]}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["agenda"]["action_items"] == []
+
+
+async def test_agenda_is_validated_like_any_other_write(client: AsyncClient) -> None:
+    meeting = (await client.post("/api/meetings", json=meeting_payload())).json()
+    url = f"/api/meetings/{meeting['id']}/agenda"
+    assert (await client.put(url, json={"items": [{"topic": "  "}]})).status_code == 422
+    assert (
+        await client.put(url, json={"items": [{"topic": "x", "minutes": 9999}]})
+    ).status_code == 422
+    assert (await client.put(url, json={"items": [{"topic": "x"}] * 51})).status_code == 422
+
+
+async def test_agenda_of_someone_elses_meeting_is_not_found(client: AsyncClient) -> None:
+    from tests.conftest import make_token
+
+    meeting = (await client.post("/api/meetings", json=meeting_payload())).json()
+    bob = {"Authorization": f"Bearer {make_token('bob')}"}
+    response = await client.put(f"/api/meetings/{meeting['id']}/agenda", json=AGENDA, headers=bob)
+    assert response.status_code == 404

@@ -1,5 +1,12 @@
 import { useRef } from 'react'
-import { ClockIcon, MapPinIcon, PencilIcon, Trash2Icon, UsersIcon } from 'lucide-react'
+import {
+  ClipboardListIcon,
+  ClockIcon,
+  MapPinIcon,
+  PencilIcon,
+  Trash2Icon,
+  UsersIcon,
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -22,10 +29,18 @@ type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onEdit: (meeting: Meeting) => void
+  onAgenda: (meeting: Meeting) => void
   onDelete: (meeting: Meeting) => void
 }
 
-export function MeetingDetailsDialog({ meeting, open, onOpenChange, onEdit, onDelete }: Props) {
+export function MeetingDetailsDialog({
+  meeting,
+  open,
+  onOpenChange,
+  onEdit,
+  onAgenda,
+  onDelete,
+}: Props) {
   const editButtonRef = useRef<HTMLButtonElement>(null)
 
   return (
@@ -77,6 +92,49 @@ export function MeetingDetailsDialog({ meeting, open, onOpenChange, onEdit, onDe
               <div className="hairline" />
               <div className="flex flex-col gap-3">
                 <h3 className="flex items-center gap-2 text-lg">
+                  <ClipboardListIcon className="size-4" />
+                  Agenda
+                  {meeting.agenda?.title && (
+                    <span className="font-sans text-sm text-muted-foreground">
+                      {meeting.agenda.title}
+                    </span>
+                  )}
+                </h3>
+                {meeting.agenda === null ? (
+                  <p className="text-muted-foreground">No agenda yet.</p>
+                ) : (
+                  <>
+                    <ol className="flex list-decimal flex-col gap-1.5 pl-5">
+                      {meeting.agenda.items.map((item, i) => (
+                        <li key={i}>
+                          {item.topic}
+                          <span className="text-sm text-muted-foreground">
+                            {item.owner && ` · ${item.owner}`}
+                            {item.minutes && ` · ${item.minutes} min`}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                    {meeting.agenda.action_items.length > 0 && (
+                      <ul className="flex list-disc flex-col gap-1.5 pl-5">
+                        {meeting.agenda.action_items.map((action, i) => (
+                          <li key={i}>
+                            {action.task}
+                            <span className="text-sm text-muted-foreground">
+                              {action.owner && ` · ${action.owner}`}
+                              {action.due && ` · by ${action.due}`}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="hairline" />
+              <div className="flex flex-col gap-3">
+                <h3 className="flex items-center gap-2 text-lg">
                   <UsersIcon className="size-4" />
                   Participants
                   <span className="font-sans text-sm text-muted-foreground">
@@ -108,10 +166,16 @@ export function MeetingDetailsDialog({ meeting, open, onOpenChange, onEdit, onDe
                 <Trash2Icon />
                 Delete
               </Button>
-              <Button ref={editButtonRef} onClick={() => onEdit(meeting)}>
-                <PencilIcon />
-                Edit
-              </Button>
+              <div className="flex gap-2 max-sm:flex-col-reverse">
+                <Button variant="outline" onClick={() => onAgenda(meeting)}>
+                  <ClipboardListIcon />
+                  {meeting.agenda ? 'Edit agenda' : 'Add agenda'}
+                </Button>
+                <Button ref={editButtonRef} onClick={() => onEdit(meeting)}>
+                  <PencilIcon />
+                  Edit
+                </Button>
+              </div>
             </DialogFooter>
           </>
         )}
