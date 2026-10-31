@@ -11,6 +11,7 @@ import urllib.request
 from datetime import date
 from functools import cache
 
+import boto3
 from anthropic import AnthropicBedrockMantle
 from pydantic import BaseModel, Field, ValidationError
 
@@ -24,6 +25,9 @@ PRICES = {
     "anthropic.claude-opus-5-5": (4.00, 20.00),
     "anthropic.claude-sonnet-5-5": (2.00, 10.00),
     "anthropic.claude-haiku-5-5": (0.10, 0.50),
+    # Amazon Nova through the Converse API (PARSER_PROVIDER=converse). The "us." cross-region
+    # profile; check the Bedrock price page, it is the one that counts.
+    "us.amazon.nova-2-lite-v1:0": (0.33, 2.75),
     # Laptop-only fallbacks (PARSER_PROVIDER=openai): list prices, although a free tier costs 0.
     "gpt-4o-mini": (0.15, 0.60),
     "gemini-2.5-flash": (0.30, 2.50),
@@ -75,6 +79,12 @@ SYSTEM = (
 def get_client() -> AnthropicBedrockMantle:
     # No API key: the Lambda role (or your AWS credentials locally) is allowed to call the model.
     return AnthropicBedrockMantle(aws_region=settings.bedrock_region)
+
+
+@cache
+def get_converse_client():
+    # The same IAM-based access as above, through bedrock-runtime instead of bedrock-mantle.
+    return boto3.client("bedrock-runtime", region_name=settings.bedrock_region)
 
 
 def cost_usd(model: str, usage: dict[str, int]) -> float:
@@ -147,6 +157,54 @@ def _parse_openai(user_text: str) -> tuple[ParsedAgenda, dict[str, int]]:
     raise AgendaParseError("the model returned an invalid agenda twice")
 
 
+def _parse_converse(user_text: str) -> tuple[ParsedAgenda, dict[str, int]]:
+    """The same contract through the Converse API, for models other than Claude (Amazon Nova)."""
+    name = RECORD_AGENDA["name"]
+    tool = {
+        "toolSpec": {
+            "name": name,
+            "description": RECORD_AGENDA["description"],
+            "inputSchema": {"json": RECORD_AGENDA["input_schema"]},
+        }
+    }
+    messages = [{"role": "user", "content": [{"text": user_text}]}]
+    usage = {"input_tokens": 0, "output_tokens": 0}
+    for _ in range(2):  # one retry, then give up
+        reply = get_converse_client().converse(
+            modelId=settings.parser_model,
+            system=[{"text": SYSTEM}],
+            messages=messages,
+            # Unlike Claude Opus on Bedrock, Nova accepts a forced tool choice.
+            toolConfig={"tools": [tool], "toolChoice": {"tool": {"name": name}}},
+            inferenceConfig={"maxTokens": 4096},
+        )
+        usage["input_tokens"] += reply["usage"]["inputTokens"]
+        usage["output_tokens"] += reply["usage"]["outputTokens"]
+        message = reply["output"]["message"]
+        call = next((b["toolUse"] for b in message["content"] if "toolUse" in b), None)
+        if call is None:
+            raise AgendaParseError(f"no agenda returned (stopReason={reply['stopReason']})")
+        try:
+            return ParsedAgenda.model_validate(call["input"]), usage
+        except ValidationError as error:  # show the model its mistake once
+            messages += [
+                message,
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "toolResult": {
+                                "toolUseId": call["toolUseId"],
+                                "content": [{"text": str(error)}],
+                                "status": "error",
+                            }
+                        }
+                    ],
+                },
+            ]
+    raise AgendaParseError("the model returned an invalid agenda twice")
+
+
 def parse_agenda(text: str, today: date, tz: str) -> tuple[ParsedAgenda, dict[str, int]]:
     """Returns the agenda and the tokens used; raises AgendaParseError if there is none."""
     user_text = (
@@ -155,6 +213,8 @@ def parse_agenda(text: str, today: date, tz: str) -> tuple[ParsedAgenda, dict[st
     )
     if settings.parser_provider == "openai":
         return _parse_openai(user_text)
+    if settings.parser_provider == "converse":
+        return _parse_converse(user_text)
     messages = [{"role": "user", "content": user_text}]
     usage = {"input_tokens": 0, "output_tokens": 0}
     for _ in range(2):  # one retry, then give up

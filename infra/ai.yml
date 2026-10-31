@@ -31,6 +31,13 @@ Parameters:
     Type: String
     Default: low
     AllowedValues: [low, medium, high]
+  ParserProvider:
+    Type: String
+    Default: bedrock
+    AllowedValues: [bedrock, converse]
+    Description: >-
+      bedrock = Claude through the Anthropic Messages API; converse = another Bedrock model
+      (e.g. ParserModel=us.amazon.nova-2-lite-v1:0) through the Converse API.
 
 Resources:
   LogGroup:
@@ -62,6 +69,12 @@ Resources:
               - Effect: Allow
                 Action: bedrock-mantle:CreateInference
                 Resource: "*"
+              # Converse: a "us." cross-region profile, and the models in the regions it routes to.
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*
+                  - arn:aws:bedrock:*::foundation-model/*
       Tags:
         - Key: PROJECT_NAME
           Value: !Ref ProjectName
@@ -87,6 +100,7 @@ Resources:
         Variables:
           PARSER_MODEL: !Ref ParserModel
           PARSER_EFFORT: !Ref ParserEffort
+          PARSER_PROVIDER: !Ref ParserProvider
           BEDROCK_REGION: !Ref AWS::Region
           CORS_ORIGINS: !Ref CorsOrigins
           COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId

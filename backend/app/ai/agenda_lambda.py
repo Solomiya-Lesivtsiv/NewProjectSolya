@@ -17,6 +17,7 @@ from datetime import date
 from typing import Annotated
 
 import anthropic
+from botocore.exceptions import ClientError
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -91,6 +92,11 @@ async def parse(body: ParseRequest, user: Annotated[str, Depends(current_user)])
     except anthropic.RateLimitError:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "The service is busy") from None
     except anthropic.APIError:
+        log.exception("Bedrock call failed")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The model is unavailable") from None
+    except ClientError as error:  # the Converse API (PARSER_PROVIDER=converse)
+        if error.response["Error"]["Code"] == "ThrottlingException":
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "The service is busy") from None
         log.exception("Bedrock call failed")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "The model is unavailable") from None
 

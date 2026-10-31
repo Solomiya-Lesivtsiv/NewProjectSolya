@@ -1,6 +1,7 @@
 # 6. Parse pasted agendas with an LLM, outside the VPC
 
-Status: accepted (2026-10-29)
+Status: accepted (2026-10-29), amended 2026-10-31 (see "Amendment: Amazon Nova while Claude is not
+available")
 
 ## Context
 
@@ -100,3 +101,30 @@ Constraints:
   it replaces the old one.
 - **The IAM resource is `"*"` for now.** It can be narrowed to the one model (or its inference
   profile) once the model is final.
+
+## Amendment: Amazon Nova while Claude is not available (2026-10-31)
+
+**Context.** Two days after the use-case form, Bedrock still answers
+`403 anthropic.claude-opus-5-5 is not available for this account`. The account itself works:
+Amazon Nova models answer through the Converse API with the same credentials.
+
+**Decision.** The parser runs on `us.amazon.nova-2-lite-v1:0` through the Converse API
+(`PARSER_PROVIDER=converse`, `PARSER_MODEL=us.amazon.nova-2-lite-v1:0`). Everything else in this
+ADR stays: the same Lambda function outside the VPC, IAM instead of API keys, the same system
+prompt, the same `record_agenda` tool and Pydantic schema, one retry with the validation error,
+and the same log line. The role additionally allows `bedrock:InvokeModel` on the account's
+inference profiles and on foundation models (a `us.` profile routes to several US regions).
+Nova 2 Lite rather than Nova Micro: Micro's documented end-of-life date has already passed.
+
+**Consequences.**
+
+- This is the trade-off from Lab 6, Part 1 in practice: the provider-neutral Converse API let
+  the parser change vendor with a new code path of about forty lines and no change to the
+  contract. Converse also accepts a forced tool choice, which Claude Opus on Bedrock does not.
+- Cost: about 1,500 input and 400 output tokens per parse (Nova 2 Lite reasons more than the
+  estimate above assumed), at $0.33 / $2.75 per 1M tokens for the `us.` profile: about $0.0016
+  per parse, about $4 a month for 2,600 parses. Prices are from third-party trackers; the Bedrock
+  price page is the one that counts.
+- Quality is measured on the same five inputs; it is not assumed to be Claude's. Back to Claude:
+  set `PARSER_PROVIDER=bedrock` and `PARSER_MODEL=anthropic.claude-opus-5-5`, then
+  `make deploy-ai`. No release of the code is needed.

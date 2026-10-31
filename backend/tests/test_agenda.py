@@ -153,3 +153,32 @@ def test_openai_fallback_uses_the_same_contract(monkeypatch):
     assert parsed.items[0].owner == "Олена"
     assert usage == {"input_tokens": 200, "output_tokens": 100}
     assert agenda.active_model() == "gpt-4o-mini"
+
+
+def test_converse_uses_the_same_contract(monkeypatch):
+    monkeypatch.setattr(agenda.settings, "parser_provider", "converse")
+    monkeypatch.setattr(agenda.settings, "parser_model", "us.amazon.nova-2-lite-v1:0")
+
+    def reply(arguments):
+        call = {"toolUse": {"toolUseId": "t1", "name": "record_agenda", "input": arguments}}
+        return {
+            "output": {"message": {"role": "assistant", "content": [call]}},
+            "stopReason": "tool_use",
+            "usage": {"inputTokens": 100, "outputTokens": 50},
+        }
+
+    answers = [reply({"items": [{"topic": ""}], "language": "uk"}), reply(GOOD)]
+    requests = []
+
+    class FakeRuntime:
+        def converse(self, **kwargs):
+            requests.append(kwargs)
+            return answers.pop(0)
+
+    monkeypatch.setattr(agenda, "get_converse_client", lambda: FakeRuntime())
+    parsed, usage = agenda.parse_agenda("...", date(2026, 10, 15), "UTC")
+    assert parsed.items[0].owner == "Олена"
+    assert usage == {"input_tokens": 200, "output_tokens": 100}
+    # The second request shows the model its validation error.
+    assert requests[1]["messages"][-1]["content"][0]["toolResult"]["status"] == "error"
+    assert agenda.cost_usd(agenda.active_model(), usage) > 0

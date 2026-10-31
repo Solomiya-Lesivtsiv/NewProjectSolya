@@ -24,8 +24,10 @@ class Settings(BaseSettings):
     parser_model: str = "anthropic.claude-opus-5-5"
     parser_effort: str = "low"
     bedrock_region: str = "us-east-1"
-    # Only for trying the parser from a laptop while Bedrock is not available: "openai" sends the
-    # same prompt and schema to OpenAI. The deployed function always uses Bedrock.
+    # How the parser reaches the model, always with the same prompt, schema and validation:
+    # "bedrock" - Claude through the Anthropic Messages API on Bedrock (bedrock-mantle);
+    # "converse" - any other Bedrock model (e.g. us.amazon.nova-2-lite-v1:0) through Converse;
+    # "openai" - laptop only, while Bedrock is not available: an OpenAI-compatible endpoint.
     parser_provider: str = "bedrock"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"

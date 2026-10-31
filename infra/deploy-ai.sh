@@ -41,6 +41,9 @@ main() {
   if [ -n "${PARSER_MODEL:-}" ]; then
     overrides+=("ParserModel=$PARSER_MODEL")
   fi
+  if [ -n "${PARSER_PROVIDER:-}" ]; then
+    overrides+=("ParserProvider=$PARSER_PROVIDER")
+  fi
 
   echo "==> [2/3] Parser stack ($AI_STACK)"
   aws cloudformation deploy \
