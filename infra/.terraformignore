@@ -1,0 +1,9 @@
+# Not uploaded to HCP Terraform with each run.
+bootstrap/
+build/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.sh
+*.yaml
+*.yml

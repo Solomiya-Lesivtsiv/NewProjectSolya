@@ -15,8 +15,8 @@ main() {
     echo "WEEK must look like 2026-W40, not '$week'." >&2
     exit 1
   fi
-  stack_exists "$REPORTS_STACK" || {
-    echo "Stack $REPORTS_STACK not found; run make deploy-reports first." >&2
+  queue_url="$(tf_output report_queue_url 2>/dev/null)" || {
+    echo "Cannot read the Terraform outputs; run terraform login and make infra-init first." >&2
     exit 1
   }
 
@@ -25,13 +25,12 @@ main() {
   else
     body='{"week": null, "source": "report-now"}'
   fi
-  queue_url="$(output "$REPORTS_STACK" QueueUrl)"
   echo "==> Queue ${queue_url##*/}: $body"
   aws sqs send-message --queue-url "$queue_url" --message-body "$body" \
     --query MessageId --output text
   echo "Sent. The report appears in the bucket within a minute (the first run after a quiet period"
   echo "waits for the database to resume). Follow it:"
-  echo "  aws logs tail $(output "$REPORTS_STACK" BuilderLogGroup) --since 5m --follow"
+  echo "  aws logs tail $(tf_output report_builder_log_group) --since 5m --follow"
 }
 
 main "$@"
