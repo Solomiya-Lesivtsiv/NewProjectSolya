@@ -7,8 +7,8 @@ s ?=
 
 .DEFAULT_GOAL := help
 .PHONY: help env build up down restart logs ps migrate migration seed psql test lint format \
-	dev-backend dev-frontend install clean deploy deploy-auth deploy-backend deploy-frontend destroy-auth destroy-backend destroy-frontend add-domain remove-domain infra-lint \
-	deploy-reports report-now destroy-reports deploy-ai destroy-ai llm-hello parse
+	dev-backend dev-frontend install clean deploy deploy-backend deploy-frontend destroy-backend destroy-frontend add-domain remove-domain infra-lint \
+	infra-init infra-plan infra-output cognito-env report-now llm-hello parse
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(firstword $(MAKEFILE_LIST)) | \
@@ -84,19 +84,13 @@ AWS_ENV := AWS_ACCESS_KEY_ID="$(AWS_ACCESS_KEY_ID)" AWS_SECRET_ACCESS_KEY="$(AWS
 	REPORT_EMAIL="$(REPORT_EMAIL)" REPORT_SCHEDULE="$(REPORT_SCHEDULE)" \
 	PARSER_MODEL="$(PARSER_MODEL)" PARSER_PROVIDER="$(PARSER_PROVIDER)"
 
-deploy: deploy-backend deploy-frontend ## Deploy the whole app to AWS (after make deploy-auth)
-
-deploy-auth: env ## Deploy Cognito (user pool + app client), print its settings and write them to .env
-	@$(AWS_ENV) ./infra/deploy-auth.sh
+deploy: deploy-backend deploy-frontend ## Deploy the whole app to AWS (the Terraform part is applied by HCP Terraform)
 
 deploy-backend: env ## Deploy backend (Lambda) + database (Aurora Serverless) to AWS, see infra/
 	@$(AWS_ENV) ./infra/deploy-backend.sh
 
 deploy-frontend: env ## Deploy frontend to S3 + CloudFront, wired to the Lambda URL (after deploy-backend)
 	@$(AWS_ENV) ./infra/deploy-frontend.sh
-
-deploy-reports: env ## Deploy the weekly report: schedule, queue, builder, bucket, mailer, SES (after deploy-backend)
-	@$(AWS_ENV) bash ./infra/deploy-reports.sh
 
 report-now: env ## Build a weekly report now: make report-now WEEK=2026-W39 (no WEEK: last week)
 	@$(AWS_ENV) bash ./infra/report-now.sh "$(WEEK)"
@@ -107,20 +101,33 @@ add-domain: env ## Attach DOMAIN_NAME from .env to the deployed frontend
 remove-domain: env ## Detach the custom domain and delete its certificate
 	@$(AWS_ENV) ./infra/remove-domain.sh
 
-destroy-auth: env ## Delete the Cognito stack (the user pool and its accounts are kept)
-	@$(AWS_ENV) ./infra/destroy-auth.sh
-
 destroy-backend: env ## Delete the AWS backend stacks (keeps a final DB snapshot)
 	@$(AWS_ENV) ./infra/destroy-backend.sh
-
-destroy-reports: env ## Delete the weekly report stack and the reports in its bucket
-	@$(AWS_ENV) bash ./infra/destroy-reports.sh
 
 destroy-frontend: env ## Delete the S3 bucket, CloudFront distribution and domain certificate
 	@$(AWS_ENV) ./infra/destroy-frontend.sh
 
-infra-lint: ## Lint the CloudFormation templates
-	uvx cfn-lint infra/*.yaml infra/*.yml
+infra-lint: ## Lint the CloudFormation templates and check the Terraform files
+	uvx cfn-lint infra/*.yaml
+	terraform -chdir=infra fmt -check -recursive
+	terraform -chdir=infra validate
+
+# --- Terraform (Lab 7): Cognito, the weekly report, the agenda parser ---
+# State and runs are in HCP Terraform. There is deliberately no apply here: changes are applied by
+# HCP Terraform after a merge to main. A plan from the laptop also runs remotely, with the
+# workspace's own AWS role, so it needs `terraform login` once but no AWS keys.
+
+infra-init: ## Connect infra/ to the HCP Terraform workspace (after terraform login)
+	terraform -chdir=infra init
+
+infra-plan: ## Show what Terraform would change (runs in HCP Terraform, read only)
+	terraform -chdir=infra plan
+
+infra-output: ## Print the Terraform outputs (user pool, parser URL, report queue, ...)
+	terraform -chdir=infra output
+
+cognito-env: ## Write the Cognito settings from Terraform into .env, for local development
+	@./infra/cognito-env.sh
 
 # --- Agenda parser (Lab 6) ---
 
@@ -131,8 +138,4 @@ parse: ## Run the agenda parser locally: make parse TEXT="Пн 10:00, синк �
 	@test -n "$(TEXT)" || (echo 'Usage: make parse TEXT="..."' && exit 1)
 	cd backend && $(AWS_ENV) uv run python -m app.ai.cli parse "$(TEXT)"
 
-deploy-ai: env ## Deploy the agenda parser (Lambda + function URL, outside the VPC; after deploy-backend)
-	@$(AWS_ENV) bash ./infra/deploy-ai.sh
 
-destroy-ai: env ## Delete the agenda parser stack
-	@$(AWS_ENV) bash -c 'source infra/common.sh && aws cloudformation delete-stack --stack-name "$$AI_STACK" && aws cloudformation wait stack-delete-complete --stack-name "$$AI_STACK"'

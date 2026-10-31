@@ -10,16 +10,13 @@ PROJECT_NAME="${PROJECT_NAME:-${APP_NAME:-meetings}}"
 ECR_STACK="$PROJECT_NAME-ecr"
 BACKEND_STACK="$PROJECT_NAME-backend"
 FRONTEND_STACK="$PROJECT_NAME-frontend"
-AUTH_STACK="$PROJECT_NAME-auth"
-REPORTS_STACK="$PROJECT_NAME-reports"
-AI_STACK="$PROJECT_NAME-ai"
 # CloudFront only accepts certificates from us-east-1.
 CERT_STACK="$PROJECT_NAME-certificate"
 CERT_REGION="us-east-1"
 
 # Every resource is tagged PROJECT_NAME=<PROJECT_NAME>: explicitly in the templates, via the
-# stack tags (which also cover resources CloudFormation creates implicitly), and by the
-# scripts for resources created outside CloudFormation.
+# stack tags (which also cover resources CloudFormation creates implicitly), by the AWS
+# provider's default_tags in Terraform, and by the scripts for resources created outside both.
 TAG_KEY="PROJECT_NAME"
 STACK_TAGS=("$TAG_KEY=$PROJECT_NAME")
 
@@ -27,6 +24,13 @@ STACK_TAGS=("$TAG_KEY=$PROJECT_NAME")
 output() {
   aws cloudformation describe-stacks --stack-name "$1" --region "${3:-$AWS_REGION}" \
     --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text
+}
+
+# tf_output NAME: prints one output of the Terraform configuration in infra/ (Cognito, the
+# weekly report, the agenda parser). The state is in HCP Terraform, so this needs
+# `terraform login` and `make infra-init` once; it never changes anything.
+tf_output() {
+  terraform -chdir=infra output -raw "$1"
 }
 
 # stack_exists STACK [REGION]
@@ -77,25 +81,18 @@ app_urls() {
   echo "$urls"
 }
 
-# update_auth_urls: points the Cognito app client's redirect URLs at the current frontend
-# addresses. Every other auth parameter (including the Google client) keeps its value.
-update_auth_urls() {
-  stack_exists "$AUTH_STACK" || return 0
-  local urls
-  urls="$(app_urls)"
-  echo "    App URLs: $urls"
-  aws cloudformation deploy \
-    --stack-name "$AUTH_STACK" \
-    --template-file infra/auth.yaml \
-    --parameter-overrides "AppUrls=$urls" \
-    --tags "${STACK_TAGS[@]}" \
-    --no-fail-on-empty-changeset
+# Cognito's redirect URLs are no longer set by a script: infra/auth.tf reads the frontend's
+# addresses from its stack, so a new or changed address takes effect with the next Terraform
+# run in HCP Terraform (a merge to main, or New run in the workspace).
+note_auth_urls() {
+  echo "    Cognito redirect URLs follow the frontend's addresses on the next Terraform run in"
+  echo "    HCP Terraform (merge to main, or New run -> Plan and apply in the workspace)."
 }
 
-# require_auth_stack: exits with a hint when Cognito has not been deployed yet.
-require_auth_stack() {
-  stack_exists "$AUTH_STACK" || {
-    echo "Stack $AUTH_STACK not found; run make deploy-auth first." >&2
+# require_terraform: exits with a hint when the Terraform outputs cannot be read yet.
+require_terraform() {
+  tf_output user_pool_id >/dev/null 2>&1 || {
+    echo "Cannot read the Terraform outputs; run terraform login and make infra-init first." >&2
     exit 1
   }
 }
